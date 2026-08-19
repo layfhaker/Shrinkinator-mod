@@ -88,6 +88,7 @@ jobs:
           version: ${{ steps.ver.outputs.version }}
           description: "Ray gun that sprays green mist shrinking valuables, enemies, and players. Shrunk enemies are easier to grab."
           community: repo
+          repo: thunderstore.io
           path: package
           website: ${{ github.server_url }}/${{ github.repository }}
           categories: |
