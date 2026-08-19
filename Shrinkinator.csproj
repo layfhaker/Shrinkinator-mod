@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>Shrinkinator</AssemblyName>
+    <RootNamespace>Shrinkinator</RootNamespace>
+    <Version>1.0.8</Version>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json;
+      https://nuget.windows10ce.com/nuget/v3/index.json;
+    </RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Паблисайзер: открывает доступ к internal/private членам игры -->
+    <PackageReference Include="BepInEx.AssemblyPublicizer.MSBuild" Version="0.4.2" PrivateAssets="all" />
+    <!-- Игровые сборки (Assembly-CSharp и т.д.), паблисайзятся на лету -->
+    <PackageReference Include="R.E.P.O.GameLibs.Steam" Version="0.4.4-ngd.0" PrivateAssets="all" Publicize="true" />
+    <!-- BepInEx 5 -->
+    <PackageReference Include="BepInEx.Core" Version="5.4.21" />
+    <!-- Модули Unity 2022.3 (только для компиляции) -->
+    <PackageReference Include="UnityEngine.Modules" Version="2022.3.62" IncludeAssets="compile" PrivateAssets="all" />
+    <!-- REPOLib -->
+    <PackageReference Include="Zehs.REPOLib" Version="4.2.0" />
+  </ItemGroup>
+
+  <!-- Игровые/юнити DLL не должны копироваться в выходную папку -->
+  <Target Name="ClearReferenceCopyLocalPaths" AfterTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <ReferenceCopyLocalPaths Remove="@(ReferenceCopyLocalPaths)" />
+    </ItemGroup>
+  </Target>
+
+</Project>

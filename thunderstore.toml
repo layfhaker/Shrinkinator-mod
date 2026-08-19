@@ -1,0 +1,34 @@
+[config]
+schemaVersion = "0.0.1"
+
+[package]
+namespace = "Avariiiprime"
+name = "Shrinkinator"
+versionNumber = "1.0.8"
+description = "Ray gun that sprays green mist shrinking valuables, enemies, and players. Shrunk enemies are easier to grab."
+websiteUrl = "https://github.com/layfhaker/Shrinkinator-mod"
+containsNsfwContent = false
+
+[package.dependencies]
+BepInEx-BepInExPack = "5.4.2100"
+Zehs-REPOLib = "4.2.0"
+
+[build]
+icon = "./thunderstore/icon.png"
+readme = "./README.md"
+outdir = "./dist"
+
+[[build.copy]]
+source = "./bin/Release/netstandard2.1/Shrinkinator.dll"
+target = "/"
+
+[[build.copy]]
+source = "./CHANGELOG.md"
+target = "/"
+
+[publish]
+repository = "https://thunderstore.io"
+communities = ["repo"]
+
+[publish.categories]
+repo = ["items", "weapons", "mods"]

@@ -1,0 +1,121 @@
+name: Publish to Thunderstore
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: thunderstore-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Build
+        run: dotnet build Shrinkinator.csproj -c Release --nologo
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          [xml]$csproj = Get-Content Shrinkinator.csproj
+          $version = ($csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
+          if ([string]::IsNullOrWhiteSpace($version)) { throw "Version missing in Shrinkinator.csproj" }
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
+          Write-Host "Package version: $version"
+
+      - name: Skip if Thunderstore already has this version
+        id: skip
+        shell: pwsh
+        run: |
+          $url = "https://thunderstore.io/api/experimental/package/Avariiiprime/Shrinkinator/"
+          try {
+            $pkg = Invoke-RestMethod -Uri $url -Headers @{ Accept = "application/json" }
+            $existing = @($pkg.versions | ForEach-Object { $_.version_number })
+            Write-Host "Published versions: $($existing -join ', ')"
+            if ($existing -contains "${{ steps.ver.outputs.version }}") {
+              Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=true"
+              Write-Host "Version ${{ steps.ver.outputs.version }} already on Thunderstore — skip publish."
+            } else {
+              Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false"
+            }
+          } catch {
+            Write-Host "Could not query Thunderstore ($($_.Exception.Message)) — will try to publish."
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false"
+          }
+
+      - name: Check Thunderstore token
+        id: token
+        env:
+          TOKEN: ${{ secrets.THUNDERSTORE_TOKEN }}
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:TOKEN)) {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has=false"
+            Write-Host "THUNDERSTORE_TOKEN is not set. Add it in Settings → Secrets and variables → Actions."
+          } else {
+            Add-Content -Path $env:GITHUB_OUTPUT -Value "has=true"
+          }
+
+      - name: Stage package files
+        if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path package | Out-Null
+          Copy-Item bin/Release/netstandard2.1/Shrinkinator.dll package/
+          Copy-Item thunderstore/icon.png package/icon.png
+          Copy-Item README.md package/README.md
+          Copy-Item CHANGELOG.md package/CHANGELOG.md
+
+      - name: Upload to Thunderstore
+        if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
+        id: ts
+        uses: GreenTF/upload-thunderstore-package@v4.3
+        with:
+          token: ${{ secrets.THUNDERSTORE_TOKEN }}
+          namespace: Avariiiprime
+          name: Shrinkinator
+          version: ${{ steps.ver.outputs.version }}
+          description: "Ray gun that sprays green mist shrinking valuables, enemies, and players. Shrunk enemies are easier to grab."
+          community: repo
+          path: package
+          website: ${{ github.server_url }}/${{ github.repository }}
+          categories: |
+            items
+            weapons
+            mods
+          deps: BepInEx-BepInExPack@5.4.2100 Zehs-REPOLib@4.2.0
+
+      - name: Tag and GitHub Release
+        if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = "v${{ steps.ver.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          $exists = git ls-remote --tags origin "refs/tags/$tag"
+          if (-not $exists) {
+            git tag $tag
+            git push origin $tag
+          }
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag "bin/Release/netstandard2.1/Shrinkinator.dll" --title $tag --notes-file CHANGELOG.md --latest
+          }
+        continue-on-error: true

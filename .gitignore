@@ -1,0 +1,17 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+log.txt
+*.log
+graphify-out/
+_decomp/
+dist/
+package/
+*.zip
+.DS_Store
+Thumbs.db
