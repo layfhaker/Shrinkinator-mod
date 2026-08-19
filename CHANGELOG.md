@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.0.9
+- Republish after accidental deprecation so Thunderstore Mod Manager can index the latest version.
+
 ## 1.0.8
 - Shrunk enemies can be picked up without a strength upgrade: grab strength is boosted for the shrink duration, follow-anchor is disabled while you pull, and they get a brief vanilla grab-stun.
 

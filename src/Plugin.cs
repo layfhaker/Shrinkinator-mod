@@ -14,7 +14,7 @@ namespace Shrinkinator
     {
         internal const string PluginGuid = "com.kimi.shrinkinator";
         internal const string PluginName = "Shrinkinator";
-        internal const string PluginVersion = "1.0.8";
+        internal const string PluginVersion = "1.0.9";
 
         private void Awake()
         {
