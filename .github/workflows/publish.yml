@@ -11,17 +11,18 @@ concurrency:
 
 jobs:
   publish:
-    runs-on: windows-latest
+    # GreenTF/upload-thunderstore-package is a Docker container action (Linux only).
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "8.0.x"
 
@@ -30,56 +31,51 @@ jobs:
 
       - name: Read version
         id: ver
-        shell: pwsh
         run: |
-          [xml]$csproj = Get-Content Shrinkinator.csproj
-          $version = ($csproj.Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1)
-          if ([string]::IsNullOrWhiteSpace($version)) { throw "Version missing in Shrinkinator.csproj" }
-          Add-Content -Path $env:GITHUB_OUTPUT -Value "version=$version"
-          Write-Host "Package version: $version"
+          version=$(grep -oP '(?<=<Version>)[^<]+' Shrinkinator.csproj | head -n1)
+          if [ -z "$version" ]; then
+            echo "Version missing in Shrinkinator.csproj" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Package version: $version"
 
       - name: Skip if Thunderstore already has this version
         id: skip
-        shell: pwsh
         run: |
-          $url = "https://thunderstore.io/api/experimental/package/Avariiiprime/Shrinkinator/"
-          try {
-            $pkg = Invoke-RestMethod -Uri $url -Headers @{ Accept = "application/json" }
-            $existing = @($pkg.versions | ForEach-Object { $_.version_number })
-            Write-Host "Published versions: $($existing -join ', ')"
-            if ($existing -contains "${{ steps.ver.outputs.version }}") {
-              Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=true"
-              Write-Host "Version ${{ steps.ver.outputs.version }} already on Thunderstore — skip publish."
-            } else {
-              Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false"
-            }
-          } catch {
-            Write-Host "Could not query Thunderstore ($($_.Exception.Message)) — will try to publish."
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "exists=false"
-          }
+          url="https://thunderstore.io/api/experimental/package/Avariiiprime/Shrinkinator/"
+          if json=$(curl -fsSL -H "Accept: application/json" "$url"); then
+            if echo "$json" | grep -q "\"version_number\":\"${{ steps.ver.outputs.version }}\""; then
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+              echo "Version ${{ steps.ver.outputs.version }} already on Thunderstore — skip publish."
+            else
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "Could not query Thunderstore — will try to publish."
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Check Thunderstore token
         id: token
         env:
           TOKEN: ${{ secrets.THUNDERSTORE_TOKEN }}
-        shell: pwsh
         run: |
-          if ([string]::IsNullOrWhiteSpace($env:TOKEN)) {
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has=false"
-            Write-Host "THUNDERSTORE_TOKEN is not set. Add it in Settings → Secrets and variables → Actions."
-          } else {
-            Add-Content -Path $env:GITHUB_OUTPUT -Value "has=true"
-          }
+          if [ -z "$TOKEN" ]; then
+            echo "has=false" >> "$GITHUB_OUTPUT"
+            echo "THUNDERSTORE_TOKEN is not set. Add it in Settings → Secrets and variables → Actions."
+          else
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Stage package files
         if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path package | Out-Null
-          Copy-Item bin/Release/netstandard2.1/Shrinkinator.dll package/
-          Copy-Item thunderstore/icon.png package/icon.png
-          Copy-Item README.md package/README.md
-          Copy-Item CHANGELOG.md package/CHANGELOG.md
+          mkdir -p package
+          cp bin/Release/netstandard2.1/Shrinkinator.dll package/
+          cp thunderstore/icon.png package/icon.png
+          cp README.md package/README.md
+          cp CHANGELOG.md package/CHANGELOG.md
 
       - name: Upload to Thunderstore
         if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
@@ -104,18 +100,15 @@ jobs:
         if: steps.skip.outputs.exists != 'true' && steps.token.outputs.has == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: pwsh
         run: |
-          $tag = "v${{ steps.ver.outputs.version }}"
+          tag="v${{ steps.ver.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          $exists = git ls-remote --tags origin "refs/tags/$tag"
-          if (-not $exists) {
-            git tag $tag
-            git push origin $tag
-          }
-          gh release view $tag 2>$null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create $tag "bin/Release/netstandard2.1/Shrinkinator.dll" --title $tag --notes-file CHANGELOG.md --latest
-          }
+          if ! git ls-remote --tags origin "refs/tags/$tag" | grep -q .; then
+            git tag "$tag"
+            git push origin "$tag"
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" bin/Release/netstandard2.1/Shrinkinator.dll --title "$tag" --notes-file CHANGELOG.md --latest
+          fi
         continue-on-error: true
