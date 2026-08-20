@@ -38,19 +38,27 @@ namespace Shrinkinator
     /// <summary>
     /// Контроллер уменьшения ценности (ValuableObject). Постоянный эффект (спека 1.4):
     /// scale применяется однократно на выстрел и не откатывается. Повторные выстрелы
-    /// стакаются мультипликативно — ценность можно уменьшать несколько раз.
+    /// стакаются мультипликативно, но не ниже ValuableMinScale от исходного размера.
     /// Вешается патчем на PhysGrabObject.Awake (тот же GameObject, что и ValuableObject).
     /// </summary>
     public class ValuableShrinkController : MonoBehaviour
     {
+        private Vector3 _baseScale;
+        private bool _hasBase;
+
         /// <summary>Вызывается хостом из обработчика выстрела.</summary>
         internal void ApplyFromHost(float scale, bool scalePrice)
         {
+            if (!TryGetAppliedScale(scale, out float applied))
+            {
+                return;
+            }
+
             ShrinkRpc.SendToAll(
                 GetComponent<PhotonView>(),
                 nameof(RPC_ApplyShrink),
-                () => ApplyLocal(scale, scalePrice),
-                scale, scalePrice);
+                () => ApplyLocal(applied, scalePrice),
+                applied, scalePrice);
         }
 
         [PunRPC]
@@ -59,14 +67,72 @@ namespace Shrinkinator
             ApplyLocal(scale, scalePrice);
         }
 
+        /// <summary>
+        /// Сколько ещё можно умножить текущий scale, чтобы не пробить пол
+        /// ValuableMinScale относительно размера на первый выстрел.
+        /// </summary>
+        private bool TryGetAppliedScale(float requested, out float applied)
+        {
+            applied = requested;
+            CaptureBaseScale();
+
+            float minRelative = Mathf.Clamp(ShrinkinatorConfig.ValuableMinScale.Value, 0.05f, 1f);
+            float original = Mathf.Max(Mathf.Abs(_baseScale.x), 0.0001f);
+            float relative = Mathf.Abs(transform.localScale.x) / original;
+            if (relative <= minRelative * 1.001f)
+            {
+                return false;
+            }
+
+            float nextRelative = relative * requested;
+            if (nextRelative < minRelative)
+            {
+                applied = minRelative / relative;
+            }
+
+            return applied < 0.999f;
+        }
+
+        private void CaptureBaseScale()
+        {
+            if (_hasBase)
+            {
+                return;
+            }
+
+            _baseScale = transform.localScale;
+            _hasBase = true;
+        }
+
         private void ApplyLocal(float scale, bool scalePrice)
         {
             try
             {
-                float volumeFactor = scale * scale * scale;
+                CaptureBaseScale();
 
-                // Размер — навсегда.
-                transform.localScale = transform.localScale * scale;
+                float minRelative = Mathf.Clamp(ShrinkinatorConfig.ValuableMinScale.Value, 0.05f, 1f);
+                float original = Mathf.Max(Mathf.Abs(_baseScale.x), 0.0001f);
+                float relative = Mathf.Abs(transform.localScale.x) / original;
+                if (relative <= minRelative * 1.001f)
+                {
+                    return;
+                }
+
+                float applied = scale;
+                float nextRelative = relative * scale;
+                if (nextRelative < minRelative)
+                {
+                    applied = minRelative / relative;
+                }
+
+                if (applied >= 0.999f)
+                {
+                    return;
+                }
+
+                float volumeFactor = applied * applied * applied;
+
+                transform.localScale = transform.localScale * applied;
 
                 // Масса: меняем и rb.mass, и PhysGrabObject.massOriginal,
                 // иначе ванильный ResetMass() вернёт старую массу.
@@ -424,12 +490,14 @@ namespace Shrinkinator
     }
 
     /// <summary>
-    /// Контроллер временного уменьшения игрока (спека 1.4).
-    /// Скейлит PlayerAvatarCollision (через мост CollisionTransform) и визуал
-    /// (playerAvatarVisuals.meshParent). Собственный CharacterController локального
-    /// игрока и камера не трогаются — см. известные ограничения в README.
+    /// Контроллер временного уменьшения игрока.
+    /// Визуал — meshParent. Сетевая коллизия — PlayerAvatarCollision.CollisionTransform.
+    /// У локального игрока настоящий хитбокс и камера живут отдельно
+    /// (PlayerCollision / CameraPosition / PlayerVisionTarget) — их тоже сжимаем,
+    /// иначе от первого лица ничего не меняется.
     /// Вешается патчем на PlayerAvatar.Start.
     /// </summary>
+    [DefaultExecutionOrder(20000)]
     public class PlayerShrinkController : MonoBehaviour
     {
         private static int _effectCounter;
@@ -446,6 +514,33 @@ namespace Shrinkinator
         private Transform _visual;
         private Vector3 _visualOriginalScale;
         private bool _warnedCollisionScale;
+
+        private bool _localFeel;
+        private Vector3 _camOffsetOriginal;
+        private float _crouchPosOriginal;
+        private float _crawlPosOriginal;
+        private float _visionStandOriginal;
+        private float _visionCrouchOriginal;
+        private float _visionCrawlOriginal;
+        private float _visionHeadStandOriginal;
+        private float _visionHeadCrouchOriginal;
+        private float _visionHeadCrawlOriginal;
+        private PlayerVisionTarget _vision;
+        private Vector3 _standCollisionOriginal;
+        private Vector3 _crouchCollisionOriginal;
+        private CapsuleCollider _standCheckCollider;
+        private float _standCheckHeightOriginal;
+        private float _standCheckRadiusOriginal;
+        private Vector3 _standCheckOffsetOriginal;
+        private float _fovOriginal;
+        private float _nearClipOriginal;
+        private bool _hasNearClip;
+        private float _grabMinOriginal;
+        private float _grabMaxOriginal;
+        private float _grabMinOriginalOriginal;
+        private float _grabRangeOriginal;
+        private bool _hasGrabDistances;
+        private float _speedMult = 1f;
 
         /// <summary>Вызывается хостом из обработчика выстрела.</summary>
         internal void ApplyFromHost(float scale, float duration)
@@ -473,6 +568,7 @@ namespace Shrinkinator
                         _timer = duration;
                         _failsafeTimer = duration + 5f;
                         _effectId = effectId;
+                        RefreshLocalFeelTimers();
                         return;
                     }
                     RevertLocal();
@@ -497,6 +593,8 @@ namespace Shrinkinator
                     _visualOriginalScale = _visual.localScale;
                     _visual.localScale = _visualOriginalScale * scale;
                 }
+
+                ApplyLocalFeel();
             }
             catch (Exception e)
             {
@@ -584,17 +682,36 @@ namespace Shrinkinator
 
         private void LateUpdate()
         {
-            if (!_active || _collision == null)
+            if (!_active)
+            {
+                return;
+            }
+
+            if (_visual != null)
+            {
+                _visual.localScale = _visualOriginalScale * _scale;
+            }
+
+            // Локальный хитбокс берётся из шаблонов PlayerCollision (stand/crouch).
+            // Если здесь заморозить Scale, сломается присед и Photon уйдёт с неверным размером.
+            if (!IsLocalAvatar())
+            {
+                ReinforceCollisionScale();
+            }
+
+            ReinforceLocalFeel();
+        }
+
+        private void ReinforceCollisionScale()
+        {
+            if (_collision == null)
             {
                 return;
             }
 
             // PlayerAvatarCollision.Update каждый кадр перезаписывает Scale и
-            // CollisionTransform.localScale (для локального игрока — из PlayerController),
+            // CollisionTransform.localScale (для локального игрока — из PlayerCollision),
             // поэтому подкрепляем наш масштаб ПОСЛЕ него, в LateUpdate.
-            // Поле Scale доступно через паблисайзер — оборачиваем в try/catch на случай
-            // смены паблисайзинга/версии игры; предупреждение логируем один раз,
-            // чтобы не спамить лог каждый кадр.
             try
             {
                 _collision.Scale = _collisionShrunkScale;
@@ -614,10 +731,320 @@ namespace Shrinkinator
             }
         }
 
+        private bool IsLocalAvatar()
+        {
+            PlayerAvatar avatar = GetComponent<PlayerAvatar>();
+            return avatar != null && avatar.isLocal;
+        }
+
+        /// <summary>
+        /// Камера, хитбоксы и рука локального игрока. PlayerCollision.instance и
+        /// CameraPosition.instance — синглтоны локального клиента, чужих не трогаем.
+        /// </summary>
+        private void ApplyLocalFeel()
+        {
+            if (_localFeel || !IsLocalAvatar())
+            {
+                return;
+            }
+
+            try
+            {
+                if (CameraPosition.instance != null)
+                {
+                    _camOffsetOriginal = CameraPosition.instance.playerOffset;
+                }
+
+                if (CameraCrouchPosition.instance != null)
+                {
+                    _crouchPosOriginal = CameraCrouchPosition.instance.Position;
+                }
+
+                if (CameraCrawlPosition.instance != null)
+                {
+                    _crawlPosOriginal = CameraCrawlPosition.instance.Position;
+                }
+
+                PlayerAvatar avatar = GetComponent<PlayerAvatar>();
+                _vision = avatar != null ? avatar.PlayerVisionTarget : null;
+                if (_vision != null)
+                {
+                    _visionStandOriginal = _vision.StandPosition;
+                    _visionCrouchOriginal = _vision.CrouchPosition;
+                    _visionCrawlOriginal = _vision.CrawlPosition;
+                    _visionHeadStandOriginal = _vision.HeadStandPosition;
+                    _visionHeadCrouchOriginal = _vision.HeadCrouchPosition;
+                    _visionHeadCrawlOriginal = _vision.HeadCrawlPosition;
+                }
+
+                if (PlayerCollision.instance != null)
+                {
+                    if (PlayerCollision.instance.StandCollision != null)
+                    {
+                        _standCollisionOriginal = PlayerCollision.instance.StandCollision.localScale;
+                    }
+
+                    if (PlayerCollision.instance.CrouchCollision != null)
+                    {
+                        _crouchCollisionOriginal = PlayerCollision.instance.CrouchCollision.localScale;
+                    }
+                }
+
+                if (PlayerCollisionStand.instance != null)
+                {
+                    _standCheckCollider = PlayerCollisionStand.instance.GetComponent<CapsuleCollider>();
+                    if (_standCheckCollider != null)
+                    {
+                        _standCheckHeightOriginal = _standCheckCollider.height;
+                        _standCheckRadiusOriginal = _standCheckCollider.radius;
+                    }
+
+                    _standCheckOffsetOriginal = PlayerCollisionStand.instance.Offset;
+                }
+
+                if (CameraZoom.Instance != null)
+                {
+                    _fovOriginal = CameraZoom.Instance.playerZoomDefault;
+                }
+
+                if (AssetManager.instance != null && AssetManager.instance.mainCamera != null)
+                {
+                    _nearClipOriginal = AssetManager.instance.mainCamera.nearClipPlane;
+                    _hasNearClip = true;
+                }
+
+                PhysGrabber grabber = PhysGrabber.instance;
+                if (grabber != null)
+                {
+                    _grabMinOriginal = grabber.minDistanceFromPlayer;
+                    _grabMaxOriginal = grabber.maxDistanceFromPlayer;
+                    _grabMinOriginalOriginal = grabber.minDistanceFromPlayerOriginal;
+                    _grabRangeOriginal = grabber.grabRange;
+                    _hasGrabDistances = true;
+                }
+
+                _speedMult = Mathf.Lerp(1f, _scale, 0.5f);
+                _localFeel = true;
+
+                if (_hasNearClip && AssetManager.instance != null && AssetManager.instance.mainCamera != null)
+                {
+                    AssetManager.instance.mainCamera.nearClipPlane = Mathf.Max(0.01f, _nearClipOriginal * _scale * 0.5f);
+                }
+
+                if (CameraZoom.Instance != null)
+                {
+                    CameraZoom.Instance.playerZoomDefault = _fovOriginal + 20f * (1f - _scale);
+                }
+
+                ReinforceLocalFeel();
+                RefreshLocalFeelTimers();
+            }
+            catch (Exception e)
+            {
+                Log.Error("[Shrinkinator] Ошибка локальной камеры/хитбокса игрока", e);
+            }
+        }
+
+        private void RefreshLocalFeelTimers()
+        {
+            if (!_localFeel)
+            {
+                return;
+            }
+
+            try
+            {
+                if (CameraZoom.Instance != null)
+                {
+                    float newFov = CameraZoom.Instance.playerZoomDefault;
+                    CameraZoom.Instance.OverrideZoomSet(newFov, 9999f, 3f, 3f, gameObject, 999);
+                }
+
+                if (PlayerController.instance != null)
+                {
+                    PlayerController.instance.OverrideSpeed(_speedMult, 9999f);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Shrinkinator] Не удалось продлить локальный эффект уменьшения: " + e.Message);
+            }
+        }
+
+        private void ReinforceLocalFeel()
+        {
+            if (!_localFeel)
+            {
+                return;
+            }
+
+            try
+            {
+                if (CameraPosition.instance != null)
+                {
+                    CameraPosition.instance.playerOffset = _camOffsetOriginal * _scale;
+                }
+
+                if (CameraCrouchPosition.instance != null)
+                {
+                    CameraCrouchPosition.instance.Position = _crouchPosOriginal * _scale;
+                }
+
+                if (CameraCrawlPosition.instance != null)
+                {
+                    CameraCrawlPosition.instance.Position = _crawlPosOriginal * _scale;
+                }
+
+                if (_vision != null)
+                {
+                    _vision.StandPosition = _visionStandOriginal * _scale;
+                    _vision.CrouchPosition = _visionCrouchOriginal * _scale;
+                    _vision.CrawlPosition = _visionCrawlOriginal * _scale;
+                    _vision.HeadStandPosition = _visionHeadStandOriginal * _scale;
+                    _vision.HeadCrouchPosition = _visionHeadCrouchOriginal * _scale;
+                    _vision.HeadCrawlPosition = _visionHeadCrawlOriginal * _scale;
+                }
+
+                if (PlayerCollision.instance != null)
+                {
+                    if (PlayerCollision.instance.StandCollision != null)
+                    {
+                        PlayerCollision.instance.StandCollision.localScale = _standCollisionOriginal * _scale;
+                    }
+
+                    if (PlayerCollision.instance.CrouchCollision != null)
+                    {
+                        PlayerCollision.instance.CrouchCollision.localScale = _crouchCollisionOriginal * _scale;
+                    }
+                }
+
+                if (_standCheckCollider != null)
+                {
+                    _standCheckCollider.height = _standCheckHeightOriginal * _scale;
+                    _standCheckCollider.radius = _standCheckRadiusOriginal * _scale;
+                }
+
+                if (PlayerCollisionStand.instance != null)
+                {
+                    PlayerCollisionStand.instance.Offset = _standCheckOffsetOriginal * _scale;
+                }
+
+                if (_hasGrabDistances && PhysGrabber.instance != null)
+                {
+                    PhysGrabber.instance.minDistanceFromPlayer = _grabMinOriginal * _scale;
+                    PhysGrabber.instance.maxDistanceFromPlayer = _grabMaxOriginal * _scale;
+                    PhysGrabber.instance.minDistanceFromPlayerOriginal = _grabMinOriginalOriginal * _scale;
+                    PhysGrabber.instance.grabRange = _grabRangeOriginal * _scale;
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warning("[Shrinkinator] Не удалось подкрепить локальный эффект уменьшения: " + e.Message);
+            }
+        }
+
+        private void RestoreLocalFeel()
+        {
+            if (!_localFeel)
+            {
+                return;
+            }
+
+            try
+            {
+                if (CameraPosition.instance != null)
+                {
+                    CameraPosition.instance.playerOffset = _camOffsetOriginal;
+                }
+
+                if (CameraCrouchPosition.instance != null)
+                {
+                    CameraCrouchPosition.instance.Position = _crouchPosOriginal;
+                }
+
+                if (CameraCrawlPosition.instance != null)
+                {
+                    CameraCrawlPosition.instance.Position = _crawlPosOriginal;
+                }
+
+                if (_vision != null)
+                {
+                    _vision.StandPosition = _visionStandOriginal;
+                    _vision.CrouchPosition = _visionCrouchOriginal;
+                    _vision.CrawlPosition = _visionCrawlOriginal;
+                    _vision.HeadStandPosition = _visionHeadStandOriginal;
+                    _vision.HeadCrouchPosition = _visionHeadCrouchOriginal;
+                    _vision.HeadCrawlPosition = _visionHeadCrawlOriginal;
+                }
+
+                if (PlayerCollision.instance != null)
+                {
+                    if (PlayerCollision.instance.StandCollision != null)
+                    {
+                        PlayerCollision.instance.StandCollision.localScale = _standCollisionOriginal;
+                    }
+
+                    if (PlayerCollision.instance.CrouchCollision != null)
+                    {
+                        PlayerCollision.instance.CrouchCollision.localScale = _crouchCollisionOriginal;
+                    }
+                }
+
+                if (_standCheckCollider != null)
+                {
+                    _standCheckCollider.height = _standCheckHeightOriginal;
+                    _standCheckCollider.radius = _standCheckRadiusOriginal;
+                }
+
+                if (PlayerCollisionStand.instance != null)
+                {
+                    PlayerCollisionStand.instance.Offset = _standCheckOffsetOriginal;
+                }
+
+                if (CameraZoom.Instance != null)
+                {
+                    CameraZoom.Instance.playerZoomDefault = _fovOriginal;
+                    CameraZoom.Instance.OverrideZoomSet(_fovOriginal, 0.5f, 3f, 3f, gameObject, 999);
+                }
+
+                if (_hasNearClip && AssetManager.instance != null && AssetManager.instance.mainCamera != null)
+                {
+                    AssetManager.instance.mainCamera.nearClipPlane = _nearClipOriginal;
+                }
+
+                if (_hasGrabDistances && PhysGrabber.instance != null)
+                {
+                    PhysGrabber.instance.minDistanceFromPlayer = _grabMinOriginal;
+                    PhysGrabber.instance.maxDistanceFromPlayer = _grabMaxOriginal;
+                    PhysGrabber.instance.minDistanceFromPlayerOriginal = _grabMinOriginalOriginal;
+                    PhysGrabber.instance.grabRange = _grabRangeOriginal;
+                }
+
+                if (PlayerController.instance != null)
+                {
+                    PlayerController.instance.OverrideSpeed(1f, 0.1f);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Error("[Shrinkinator] Ошибка возврата камеры/хитбокса игрока", e);
+            }
+            finally
+            {
+                _localFeel = false;
+                _vision = null;
+                _standCheckCollider = null;
+                _hasNearClip = false;
+                _hasGrabDistances = false;
+            }
+        }
+
         private void RevertLocal()
         {
             try
             {
+                RestoreLocalFeel();
+
                 if (_collision != null)
                 {
                     _collision.Scale = _collisionOriginalScale;

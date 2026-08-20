@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+- Shrunk players now feel small: camera drops to the new height, FOV widens, grab reach shortens, and the real stand/crouch hitboxes scale (not just the visual mesh).
+- Valuables stop shrinking once they hit `ValuableMinScale` (default 20% of original size).
+
 ## 1.0.9
 - Republish after accidental deprecation so Thunderstore Mod Manager can index the latest version.
 

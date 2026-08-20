@@ -2,8 +2,8 @@
 
 BepInEx mod for **R.E.P.O.** that adds a shop weapon: the **Shrinkinator**. A shot sprays green mist; anything in the cloud shrinks.
 
-- **Valuables** shrink **permanently** (size and mass). Dollar value stays the same.
-- **Enemies and players** shrink **temporarily** (20 seconds by default), then grow back.
+- **Valuables** shrink **permanently** (size and mass), down to a configurable minimum so they cannot vanish from stacking. Dollar value stays the same.
+- **Enemies and players** shrink **temporarily** (20 seconds by default), then grow back. Shrunk players get a lower camera, smaller hitboxes, and shorter grab reach.
 - Shrunk enemies are **lighter and easier to grab** (works like a strength upgrade: a short tug picks them up and briefly stuns). They are **not** hard-stunned by the ray itself.
 - **6 charges** via the vanilla battery (recharge at stations).
 - Procedural retro ray-gun model (can be turned off in config).
@@ -37,6 +37,7 @@ dotnet build -c Release
 | `ScaleFactor` | `0.35` | Size multiplier (~3× smaller). |
 | `DurationSeconds` | `20` | Enemy/player shrink duration. |
 | `ValueScalePrice` | `false` | Do **not** reduce valuable price. |
+| `ValuableMinScale` | `0.2` | Floor for valuable size vs original (stops infinite stacking). |
 | `Charges` | `6` | Shots per full battery. |
 | `UseCustomModel` | `true` | Procedural gun mesh. |
 

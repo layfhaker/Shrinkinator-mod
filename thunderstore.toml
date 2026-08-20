@@ -4,7 +4,7 @@ schemaVersion = "0.0.1"
 [package]
 namespace = "Avariiiprime"
 name = "Shrinkinator"
-versionNumber = "1.0.9"
+versionNumber = "1.1.0"
 description = "Ray gun that sprays green mist shrinking valuables, enemies, and players. Shrunk enemies are easier to grab."
 websiteUrl = "https://github.com/layfhaker/Shrinkinator-mod"
 containsNsfwContent = false

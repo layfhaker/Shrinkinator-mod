@@ -15,6 +15,7 @@ namespace Shrinkinator
         internal static ConfigEntry<float> MistRange;
         internal static ConfigEntry<int> Charges;
         internal static ConfigEntry<bool> ValueScalePrice;
+        internal static ConfigEntry<float> ValuableMinScale;
         internal static ConfigEntry<string> ItemName;
         internal static ConfigEntry<float> PriceMultiplier;
         internal static ConfigEntry<float> ShootCooldown;
@@ -53,6 +54,10 @@ namespace Shrinkinator
             ValueScalePrice = config.Bind(
                 "Ценности", "ValueScalePrice", false,
                 "Уменьшать ли стоимость ценности вместе с размером. По умолчанию false: цена остаётся прежней, уменьшается только размер и масса.");
+
+            ValuableMinScale = config.Bind(
+                "Ценности", "ValuableMinScale", 0.2f,
+                "Минимальный размер ценности относительно исходного (0.2 = не меньше 20%). Повторные выстрелы стакаются, пока не упрётся в этот пол. Дальше выстрелы игнорируются.");
 
             ItemName = config.Bind(
                 "Пушка", "ItemName", "Уменьшитель-инатор",
